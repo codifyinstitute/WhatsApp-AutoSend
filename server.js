@@ -1,55 +1,67 @@
 const express = require('express');
 const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
+const qrcode = require('qrcode');
+const bodyParser = require('body-parser');
 
-// Create a new instance of express
+// Create an Express application
 const app = express();
 
-// Use JSON middleware to parse request bodies
-app.use(express.json());
+// Middleware to parse JSON requests
+app.use(bodyParser.json());
 
-// Initialize WhatsApp client
+// Initialize WhatsApp Web client with LocalAuth for persistent sessions
 const client = new Client({
-    authStrategy: new LocalAuth(), // Used for persistent sessions
+    authStrategy: new LocalAuth(),
     puppeteer: {
-        headless: true, // Run in headless mode (no UI)
-        args: ['--no-sandbox', '--disable-setuid-sandbox'] // Some necessary args for the headless browser
+        headless: true, // Run in headless mode
+        args: ['--no-sandbox', '--disable-setuid-sandbox'] // Necessary args for headless browsers
     }
 });
 
-// Generate QR code for WhatsApp Web authentication
-client.on('qr', qr => {
-    qrcode.generate(qr, { small: true }); // Display QR code in terminal for authentication
+// Serve QR code on a web route so that it can be scanned
+client.on('qr', (qr) => {
+    // Generate QR code as an image and serve it at /qr endpoint
+    qrcode.toDataURL(qr, (err, url) => {
+        if (err) {
+            console.error('Error generating QR code', err);
+            return;
+        }
+        // Save the QR code as a base64 image URL
+        qrCodeDataUrl = url;
+    });
 });
 
-// Log when client is ready
+// Once the client is ready, log success
 client.on('ready', () => {
     console.log('WhatsApp Client is ready!');
 });
 
-// Start the WhatsApp client
+// Initialize the client
 client.initialize();
+
+// Serve the QR code at /qr endpoint
+app.get('/qr', (req, res) => {
+    if (!qrCodeDataUrl) {
+        return res.status(400).json({ error: 'QR code is not yet available' });
+    }
+    res.send(`<img src="${qrCodeDataUrl}" alt="QR Code">`);
+});
 
 // Endpoint to send WhatsApp message
 app.post('/send-whatsapp', async (req, res) => {
-    const { mobile, message } = req.body; // Expecting { mobile: 'whatsapp_number', message: 'your_message' }
+    const { mobile, message } = req.body;
 
     if (!mobile || !message) {
         return res.status(400).json({ error: 'Mobile number and message are required' });
     }
 
     try {
-        // Ensure the phone number is formatted correctly with @c.us
-        let chatId = mobile.includes('@c.us') ? mobile : `${mobile.replace(/\D/g, '')}@c.us`; // Strip non-digit characters and append @c.us
+        // Format phone number correctly
+        let chatId = mobile.includes('@c.us') ? mobile : `${mobile.replace(/\D/g, '')}@c.us`; // Format to whatsapp:xxxxxxx@c.us
 
-        // Validate phone number format (example: "+1234567890")
-        const phoneRegex = /^\+(\d{1,4})?(\d{10,15})$/;
-        if (!phoneRegex.test(mobile)) {
-            return res.status(400).json({ error: 'Invalid phone number format' });
-        }
-
-        // Send message using WhatsApp client
+        // Send the message via WhatsApp client
         await client.sendMessage(chatId, message);
+
         res.status(200).json({ success: true, message: 'Message sent successfully' });
     } catch (error) {
         console.error('Error sending message:', error);
@@ -57,8 +69,8 @@ app.post('/send-whatsapp', async (req, res) => {
     }
 });
 
-// Start the server
-const port = 3000;
+// Start the Express server
+const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`Server is running on port ${port}`);
 });
